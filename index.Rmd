@@ -1,0 +1,455 @@
+---
+title: "Practical Machine Learning: analysis and forecasting of personal activities"
+author: "ricardoZmestre"
+date: "19 October 2015"
+output: html_document
+---
+
+## Introduction
+
+```{r options, echo=FALSE, message=FALSE, warnings=FALSE, results='markup'}
+
+rm(list=ls())
+
+library(caret)
+library(lattice)
+library(ggplot2)
+library(MASS)
+library(rpart)
+library(klaR)
+library(gbm)
+library(randomForest)
+
+library(knitr)
+# overall markdown options
+opts_chunk$set(echo=FALSE, results='markup', message=FALSE, warnings=FALSE,
+               fig.width=10, fig.height=5)
+```
+
+Using devices such as _Jawbone Up, Nike FuelBand, and Fitbit_ it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they _rarely quantify how well they do it_. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset). 
+
+## Data processing
+
+Data are loaded from ['pml-training.csv'](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) for the trainig data, and ['pml-testing.csv'](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) for the data from which the predictions have to be built. Note that the latter dataset is only read and used at the end of the report, when final predictions are to be generated.
+
+```{r load data, cache=TRUE}
+
+# download files (if needed)
+if (!file.exists('pml-training.csv')) {
+  download.file(url='https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv',
+                destfile='pml-training.csv', method='libcurl')
+}
+if (!file.exists('pml-testing.csv')) {
+  download.file(url='https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv',
+                destfile='pml-testing.csv')
+}
+
+# get data in memory (note that I let R create factor variables)
+df <- read.csv('pml-training.csv', na.strings=c('NA',  '#DIV/0!', ''))
+
+```
+
+
+```{r to delete}
+############# DELETE ###############
+#df <- df[sample(1:nrow(df), size=floor(nrow(df)/20), replace=FALSE), ]
+############# DELETE ###############
+```
+
+The default options for reading CSV files in R are accepted: character variables in the file are converted into factors, while numerical variables remain so--although many are transformed into integers, which is in practice irrelevant for the rest of the analysis. Values of 'NA', blank space or '#DIV/0!' are read as missing (NA in R). A total of `r ncol(df)` variables are read for `r nrow(df)` observations.
+
+```{r clean up, cache=TRUE}
+
+require(caret)
+# set list of variables to keep
+keep <- names(df)
+# delete NAs
+NApct <- lapply(df, FUN=function(x) {sum(is.na(x)/length(x))})
+dropNA <- names(df)[NApct>0.25]
+keep <- setdiff(keep, dropNA)
+#sum(is.na(df[keep])) # check that no NAs remain
+# delete zero vars
+dropZero <- names(df[nearZeroVar(df[keep])])
+keep <- setdiff(keep, dropZero)
+# delete specific columns
+keep <- setdiff(keep, 'X')  # X seems to be a counter
+keep <- setdiff(keep, c('raw_timestamp_part_1', 'raw_timestamp_part_2'))  # duplicated information
+# now, list with predictors variables
+predictors <- setdiff(keep, 'classe')
+
+```
+
+The data are cleaned in the follwing way: variables with more than 25% of NAs are dropped, together with variables with little variation (as measured by function _nearZeroVar()_) and two numerical variables for time stamps that duplicate information in the data field. Variables with more than 25% of NAs are dropped because it is risky to do missing-data imputation when there are too many missing values. Note that all variables with missing values have actually considerably more than 25% of values affected, and so the previous step in fact deletes all NAs from the data.
+
+After the clean-up, `r ncol(df)` variables are left.
+
+Factor representation of some variables are accepted because they are convenient: they apply to only two variables in the final data set, to user names (of which there are only 6) and to the time stamps (of which there are only 20 different values). In the ensuing analysis, the fact that these variables are factors does not hamper the analysis. (Note that dropping the two variables does not alter results.)
+
+
+```{r split data, cache=TRUE}
+
+require(caret)
+set.seed(12345)
+# set train and test dbs
+inTrain <- createDataPartition(df$classe, p=0.6, list=FALSE)
+training <- df[inTrain, keep]
+testing <- df[-inTrain, keep]
+
+```
+
+
+The initial data are split in two sets, a training part and a testing part, in line with the established practice. The split is 60% for training (`r nrow(training)` rows) and 40% for testing (`r nrow(testing)` rows). Note that the data over which the final predictions have to be built is not read at this stage. What will be called training and testing data sets below correspond to the split of the initial data set.
+
+
+```{r define PCA, cache=TRUE}
+
+require(caret)
+# PCA
+preprocPCA <- preProcess(training[predictors], method='pca', thresh=0.9)
+trainingPCA <- predict(preprocPCA, training[predictors])
+testingPCA <- predict(preprocPCA, testing[predictors])
+
+```
+
+
+The analysis will inlcude the usage of alternative models, from which the best one will be chosen. Each alternative model will be estimated also using principal components (PCA) instead of the original variables. The PCA variables are selected such that they explain 90% of the variance of the original variables--`r preprocPCA$numComp` components are selected. Note that the PCA procedure is only applied to numerical variables but that factor variables are left unaffected in the PCA data set. 
+
+## Prediction models
+
+The models used are: linear discriminant analysis (LDA), Classitication Trees (RPART), Naive Bayes (NB), Gradient Boosted Machine (GBM) and Random Forests (RF). Each model is estimated using the _train()_ function of the _caret_ package, using default options for each model except that cross-validation is used instead of bootstrap: 10-fold cross-validations repeated 3 times were selected. Note that bootstrapping instead of cross-validation led to very similar results.
+
+Each model estimated on the original variables is presented with a description of the model and the outcome of applying it on the testing dataset (which, let me remind, is the 40% portion of the original data set left for testing predictions).
+
+### Linear Discriminant Analysis (LDA)
+
+```{r model LDA, cache=TRUE}
+
+require(caret)
+set.seed(12345)
+# LDA (NB: cvtd_timestamp cannot be used)
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelLDA <- train(training$classe ~ ., data=training[-(which(names(training)=='cvtd_timestamp'))], method='lda', trControl=cvCtrl)
+fitLDA <- predict(modelLDA, training)
+#confusionMatrix(fitLDA, training$classe)
+predLDA <- predict(modelLDA, testing)
+#confusionMatrix(predLDA, testing$classe)
+
+```
+
+
+The first prediction technqiue used is Linear Discriminant Analysis (LDA). The resulting model has an accuracy of `r round(confusionMatrix(fitLDA, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predLDA, testing$classe)$overall[[1]], 3)` in the testing set.
+
+
+```{r model LDA PCA, cache=TRUE}
+
+require(caret)
+set.seed(12345)
+# LDA -- PCA (NB: cvtd_timestamp cannot be used)
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelLDA.PCA <- train(training$classe ~ ., data=trainingPCA[-(which(names(trainingPCA)=='cvtd_timestamp'))], method='lda', trControl=cvCtrl)
+fitLDA.PCA <- predict(modelLDA.PCA, trainingPCA)
+#confusionMatrix(fitLDA.PCA, training$classe)
+predLDA.PCA <- predict(modelLDA.PCA, testingPCA)
+#confusionMatrix(predLDA.PCA, testing$classe)
+
+```
+
+
+The corresponding accuracies for the model estimated on the PCA variables are `r round(confusionMatrix(fitLDA.PCA, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predLDA.PCA, testing$classe)$overall[[1]], 3)` in the testing set.
+
+This is the outcome of the model.
+
+```{r outcome LDA}
+
+modelLDA
+confusionMatrix(predLDA, testing$classe)
+
+```
+
+### Classification trees (RPART)
+
+```{r model RPART, cache=TRUE}
+
+require(caret)
+set.seed(12345)
+# RPART
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelRPART <- train(training$classe ~ ., data=training, method='rpart', trControl=cvCtrl)
+fitRPART <- predict(modelRPART, training)
+#confusionMatrix(fitRPART, training$classe)
+predRPART <- predict(modelRPART, testing)
+#confusionMatrix(predRPART, testing$classe)
+
+```
+
+
+The first prediction technique used is Classification Tree (RPART). The resulting model has an accuracy of `r round(confusionMatrix(fitRPART, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predRPART, testing$classe)$overall[[1]], 3)` in the testing set.
+
+
+```{r model RPART PCA, cache=TRUE}
+
+require(caret)
+set.seed(12345)
+# RPART -- PCA
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelRPART.PCA <- train(training$classe ~ ., data=trainingPCA, method='rpart', trControl=cvCtrl)
+fitRPART.PCA <- predict(modelRPART.PCA, trainingPCA)
+#confusionMatrix(fitRPART.PCA, training$classe)
+predRPART.PCA <- predict(modelRPART.PCA, testingPCA)
+#confusionMatrix(predRPART.PCA, testing$classe)
+
+```
+
+
+The corresponding accuracies for the model estimated on the PCA variables are `r round(confusionMatrix(fitRPART.PCA, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predRPART.PCA, testing$classe)$overall[[1]], 3)` in the testing set.
+
+This is the outcome of the model.
+
+
+```{r outcome RPART}
+
+modelRPART
+confusionMatrix(predRPART, testing$classe)
+
+```
+
+### Naive Bayes (NB)
+
+```{r model NB, cache=TRUE, eval=TRUE}
+
+require(caret)
+set.seed(12345)
+# NB
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+# warnings have to be turned off
+options(warn=-1)
+modelNB <- train(training$classe ~ ., data=training, method='nb', trControl=cvCtrl)
+fitNB <- predict(modelNB, training)
+#confusionMatrix(fitNB, training$classe)
+predNB <- predict(modelNB, testing)
+#confusionMatrix(predNB, testing$classe)
+options(warn=0)
+
+```
+
+
+The first prediction technqiue used is Naive Bayes (NB). The resulting model has an accuracy of `r round(confusionMatrix(fitNB, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predNB, testing$classe)$overall[[1]], 3)` in the testing set.
+
+
+```{r model NB PCA, cache=TRUE, eval=TRUE}
+
+require(caret)
+set.seed(12345)
+# NB -- PCA
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+# warnings have to be turned off
+options(warn=-1)
+modelNB.PCA <- train(training$classe ~ ., data=trainingPCA, method='nb', trControl=cvCtrl)
+fitNB.PCA <- predict(modelNB.PCA, trainingPCA)
+#confusionMatrix(fitNB.PCA, training$classe)
+predNB.PCA <- predict(modelNB.PCA, testingPCA)
+#confusionMatrix(predNB.PCA, testing$classe)
+options(warn=0)
+
+```
+
+
+The corresponding accuracies for the model estimated on the PCA variables are `r round(confusionMatrix(fitNB.PCA, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predNB.PCA, testing$classe)$overall[[1]], 3)` in the testing set.
+
+This is the outcome of the model.
+
+
+```{r outcome NB}
+
+modelNB
+confusionMatrix(predNB, testing$classe)
+
+```
+
+### Gradient Boosting Method (GBM)
+
+```{r model GBM, cache=TRUE, eval=TRUE}
+
+require(caret)
+set.seed(12345)
+# GBM
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelGBM <- train(training$classe ~ ., data=training, method='gbm', trControl=cvCtrl, verbose=FALSE)
+fitGBM <- predict(modelGBM, training)
+#confusionMatrix(fitGBM, training$classe)
+predGBM <- predict(modelGBM, testing)
+#confusionMatrix(predGBM, testing$classe)
+
+```
+
+
+The first prediction technqiue used is Gradient Boosting Method (GBM). The resulting model has an accuracy of `r round(confusionMatrix(fitGBM, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predGBM, testing$classe)$overall[[1]], 3)` in the testing set.
+
+
+```{r model GBM PCA, cache=TRUE, eval=FALSE}
+
+require(caret)
+set.seed(12345)
+# GBM -- PCA
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelGBM.PCA <- train(training$classe ~ ., data=trainingPCA, method='gbm', trControl=cvCtrl)
+fitGBM.PCA <- predict(modelGBM.PCA, trainingPCA, trControl=cvCtrl, verbose=FALSE)
+#confusionMatrix(fitGBM.PCA, training$classe)
+predGBM.PCA <- predict(modelGBM.PCA, testingPCA)
+#confusionMatrix(predGBM.PCA, testing$classe)
+
+```
+
+
+This model was not run with PCA variables due to computing problems that prevented finalisation of the estimation process.
+
+This is the outcome of the model.
+
+
+```{r outcome GBM}
+
+modelGBM
+confusionMatrix(predGBM, testing$classe)
+
+```
+
+### Random Forests (RF)
+
+
+```{r model RF, cache=TRUE, eval=TRUE}
+
+require(caret)
+set.seed(12345)
+# RF
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelRF <- train(training$classe ~ ., data=training, method='rf', trControl=cvCtrl)
+fitRF <- predict(modelRF, training)
+#confusionMatrix(fitRF, training$classe)
+predRF <- predict(modelRF, testing)
+#confusionMatrix(predRF, testing$classe)
+
+```
+
+
+The first prediction technqiue used is Random Forest (RF). The resulting model has an accuracy of `r round(confusionMatrix(fitRF, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predRF, testing$classe)$overall[[1]], 3)` in the testing set.
+
+
+```{r model RF PCA, cache=TRUE, eval=TRUE}
+
+require(caret)
+set.seed(12345)
+# RF -- PCA
+cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+modelRF.PCA <- train(training$classe ~ ., data=trainingPCA, method='rf', trControl=cvCtrl)
+fitRF.PCA <- predict(modelRF.PCA, trainingPCA)
+#confusionMatrix(fitRF.PCA, training$classe)
+predRF.PCA <- predict(modelRF.PCA, testingPCA)
+#confusionMatrix(predRF.PCA, testing$classe)
+
+```
+
+
+The corresponding accuracies for the model estimated on the PCA variables are `r round(confusionMatrix(fitRF.PCA, training$classe)$overall[[1]], 3)` in the training set (fit) and `r round(confusionMatrix(predRF.PCA, testing$classe)$overall[[1]], 3)` in the testing set.
+
+This is the outcome of the model.
+
+
+```{r outcome RF}
+
+modelRF
+confusionMatrix(predRF, testing$classe)
+
+```
+
+
+### Full data estimation with preferred model
+
+The table below summarises the outcome for all the models using original variables. Models using PCA variables were similar in behaviour to their counterparts, and did not alter the rankings.
+
+
+```{r table}
+
+require(caret)
+models <- c('LDA', 'RPART', 'NB', 'GBM', 'RF')
+stats <- rbind(
+  confusionMatrix(predLDA, testing$classe)$overall,
+  confusionMatrix(predRPART, testing$classe)$overall,
+  confusionMatrix(predNB, testing$classe)$overall,
+  confusionMatrix(predGBM, testing$classe)$overall,
+  confusionMatrix(predRF, testing$classe)$overall
+)
+kable(data.frame(Model=models, stats[, c(1, 3, 4, 2)]))
+
+```
+
+
+```{r memory clean up}
+
+rm(list=c('training', 'testing', 'trainingPCA', 'testingPCA'))
+
+```
+
+
+The preferred model for the prediction exercise is the Random Forest one (RF) estimated over the entire data set (i.e., without the training and testing split), run on the original variables and with 39 randomly selected predictors in each step (parameter _mtry_), as selected in the training data set--running the full parameter tuning exercise was found to be too costly in memory and computing terms.
+
+```{r final model, cache=TRUE, eval=TRUE}
+
+require(caret)
+# full sample
+#cvCtrl <- trainControl(method='repeatedcv', repeats=3)
+#modelFULL <- train(df$classe ~ ., data=df[, keep], method='rf', trControl=cvCtrl)
+modelFULL <- randomForest(y=df$classe, x=df[predictors], mtry=39)
+fitFULL <- predict(modelFULL, df[, keep])
+#confusionMatrix(fitFULL, df$classe)
+
+```
+
+
+This is the description and outcome of the final model--note that the outcome is calculated over the same data set as used for the estimation, i.e. it is the fit of the model.
+
+
+```{r outcome final model}
+
+modelFULL
+confusionMatrix(fitFULL, df$classe)
+
+```
+
+
+### Data downloading.
+
+Finally, the testing dataset ['pml-testing.csv'](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) is read and predictions using the final model are produced. They are downloaded using the function *pml_write_files()* as requested.
+
+
+```{r predict, eval=TRUE}
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+testing <- read.csv('pml-testing.csv', na.strings=c('NA',  '#DIV/0!', ''))
+# correct for automatic class rendering by read.csv
+levels(testing$cvtd_timestamp) <- levels(df$cvtd_timestamp)
+testing$magnet_dumbbell_z <- as.numeric(testing$magnet_dumbbell_z)
+testing$magnet_forearm_y <- as.numeric(testing$magnet_forearm_y)
+testing$magnet_forearm_z <- as.numeric(testing$magnet_forearm_z)
+predFULL <- predict(modelFULL, testing[predictors])
+pml_write_files(as.character(predFULL))
+
+```
+
+
+## Annex
+
+This annex includes a description of the predictor variables in the data set, using function _describe()_ in package _Hmisc_.
+
+```{r annex}
+
+require(Hmisc)
+describe(df[keep])
+
+```
