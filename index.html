@@ -76,11 +76,11 @@ img {
 <h2>Data processing</h2>
 <p>Data are loaded from <a href="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv">‘pml-training.csv’</a> for the trainig data, and <a href="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv">‘pml-testing.csv’</a> for the data from which the predictions have to be built. Note that the latter dataset is only read and used at the end of the report, when final predictions are to be generated.</p>
 <p>The default options for reading CSV files in R are accepted: character variables in the file are converted into factors, while numerical variables remain so–although many are transformed into integers, which is in practice irrelevant for the rest of the analysis. Values of ‘NA’, blank space or ‘#DIV/0!’ are read as missing (NA in R). A total of 160 variables are read for 19622 observations.</p>
-<p>The data are cleaned in the follwing way: variables with more than 25% of NAs are dropped, together with variables with little variation (as measured by function <em>nearZeroVar()</em>) and two numerical variables for time stamps that duplicate information in the data field. Variables with more than 25% of NAs are dropped because it is risky to do missing-data imputation when there are too many missing values. Note that all variables with missing values have actually considerably more than 25% of values affected, and so the previous step in fact deletes all NAs from the data.</p>
-<p>After the clean-up, 160 variables are left.</p>
-<p>Factor representation of some variables are accepted because they are convenient: they apply to only two variables in the final data set, to user names (of which there are only 6) and to the time stamps (of which there are only 20 different values). In the ensuing analysis, the fact that these variables are factors does not hamper the analysis. (Note that dropping the two variables does not alter results.)</p>
-<p>The initial data are split in two sets, a training part and a testing part, in line with the established practice. The split is 60% for training (11776 rows) and 40% for testing (7846 rows). Note that the data over which the final predictions have to be built is not read at this stage. What will be called training and testing data sets below correspond to the split of the initial data set.</p>
-<p>The analysis will inlcude the usage of alternative models, from which the best one will be chosen. Each alternative model will be estimated also using principal components (PCA) instead of the original variables. The PCA variables are selected such that they explain 90% of the variance of the original variables–19 components are selected. Note that the PCA procedure is only applied to numerical variables but that factor variables are left unaffected in the PCA data set.</p>
+<p>The data are cleaned in the follwing way: variables with more than 25% of NAs are dropped, together with variables with little variation (as measured by function <em>nearZeroVar()</em>) and two numerical variables for time stamps that duplicate information elsewhere in the data. Variables with more than 25% of NAs are dropped because it is risky to do missing-data imputation when there are too many missing values. Note that all variables with missing values have actually considerably more than 25% of values affected, and so the previous step in fact deletes all NAs from the data. It was thus not necessary to do further imputation work.</p>
+<p>After the clean-up, 56 variables are left.</p>
+<p>Factor representation of some variables are accepted because they seem convenient: they apply to only two variables in the final data set, to user names (of which there are only 6) and to the time stamps (of which there are only 20 different values). In the ensuing analysis, the fact that these variables are factors does not hamper the analysis. (Note that dropping the two variables does not alter results.)</p>
+<p>The initial data are split in two sets, a training part and a testing part, in line with the established practice. The split is 60% for training (11776 rows) and 40% for testing (7846 rows). Note that the data over which the final predictions have to be built is not read at this stage. What will be called training and testing data sets below correspond to the split of the initial data set. The models will be assessed using the testing data set, i.e. using data different from the data in the training phase, in order to avoid overfitting.</p>
+<p>The analysis will include the usage of alternative models, from which the best one will be chosen. Each alternative model will be estimated also using principal components (PCA) instead of the original variables. The PCA variables are selected such that they explain 90% of the variance of the original variables–19 components are selected. Note that the PCA procedure is only applied to numerical variables but that factor variables are left unaffected in the PCA data set.</p>
 </div>
 <div id="prediction-models" class="section level2">
 <h2>Prediction models</h2>
@@ -140,7 +140,7 @@ img {
 </div>
 <div id="classification-trees-rpart" class="section level3">
 <h3>Classification trees (RPART)</h3>
-<p>The first prediction technique used is Classification Tree (RPART). The resulting model has an accuracy of 0.535 in the training set (fit) and 0.536 in the testing set.</p>
+<p>The second prediction technique used is Classification Tree (RPART). The resulting model has an accuracy of 0.535 in the training set (fit) and 0.536 in the testing set.</p>
 <p>The corresponding accuracies for the model estimated on the PCA variables are 0.666 in the training set (fit) and 0.658 in the testing set.</p>
 <p>This is the outcome of the model.</p>
 <pre><code>## CART 
@@ -195,7 +195,7 @@ img {
 </div>
 <div id="naive-bayes-nb" class="section level3">
 <h3>Naive Bayes (NB)</h3>
-<p>The first prediction technqiue used is Naive Bayes (NB). The resulting model has an accuracy of 0.723 in the training set (fit) and 0.718 in the testing set.</p>
+<p>The third prediction technqiue used is Naive Bayes (NB). The resulting model has an accuracy of 0.723 in the training set (fit) and 0.718 in the testing set.</p>
 <p>The corresponding accuracies for the model estimated on the PCA variables are 0.495 in the training set (fit) and 0.488 in the testing set.</p>
 <p>This is the outcome of the model.</p>
 <pre><code>## Naive Bayes 
@@ -250,7 +250,7 @@ img {
 </div>
 <div id="gradient-boosting-method-gbm" class="section level3">
 <h3>Gradient Boosting Method (GBM)</h3>
-<p>The first prediction technqiue used is Gradient Boosting Method (GBM). The resulting model has an accuracy of 0.996 in the training set (fit) and 0.992 in the testing set.</p>
+<p>The fourth prediction technqiue used is Gradient Boosting Method (GBM). The resulting model has an accuracy of 0.996 in the training set (fit) and 0.992 in the testing set.</p>
 <p>This model was not run with PCA variables due to computing problems that prevented finalisation of the estimation process.</p>
 <p>This is the outcome of the model.</p>
 <pre><code>## Stochastic Gradient Boosting 
@@ -325,7 +325,7 @@ img {
 </div>
 <div id="random-forests-rf" class="section level3">
 <h3>Random Forests (RF)</h3>
-<p>The first prediction technqiue used is Random Forest (RF). The resulting model has an accuracy of 1 in the training set (fit) and 0.998 in the testing set.</p>
+<p>The fifth and last prediction technqiue used is Random Forest (RF). The resulting model has an accuracy of 1 in the training set (fit) and 0.998 in the testing set.</p>
 <p>The corresponding accuracies for the model estimated on the PCA variables are 1 in the training set (fit) and 0.979 in the testing set.</p>
 <p>This is the outcome of the model.</p>
 <pre><code>## Random Forest 
@@ -429,7 +429,7 @@ img {
 </tr>
 </tbody>
 </table>
-<p>The preferred model for the prediction exercise is the Random Forest one (RF) estimated over the entire data set (i.e., without the training and testing split), run on the original variables and with 39 randomly selected predictors in each step (parameter <em>mtry</em>), as selected in the training data set–running the full parameter tuning exercise was found to be too costly in memory and computing terms.</p>
+<p>The final model for the prediction exercise is the Random Forest one (RF), as it was the best behaved in the tests described previously. The model is estimated over the entire data set (i.e., without the training and testing split) and run on the original variables and with 39 randomly selected predictors in each step (parameter <em>mtry</em>), as selected in the training data step above–running the full parameter tuning exercise for the full data set was found to be too costly in memory and computing terms.</p>
 <p>This is the description and outcome of the final model–note that the outcome is calculated over the same data set as used for the estimation, i.e. it is the fit of the model.</p>
 <pre><code>## 
 ## Call:
