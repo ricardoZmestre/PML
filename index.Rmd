@@ -398,7 +398,7 @@ require(caret)
 # full sample
 #cvCtrl <- trainControl(method='repeatedcv', repeats=3)
 #modelFULL <- train(df$classe ~ ., data=df[, keep], method='rf', trControl=cvCtrl)
-modelFULL <- randomForest(y=df$classe, x=df[predictors], mtry=39)
+modelFULL <- randomForest(y=df$classe, x=df[predictors], mtry=39, importance=TRUE)
 fitFULL <- predict(modelFULL, df[, keep])
 #confusionMatrix(fitFULL, df$classe)
 
@@ -412,6 +412,26 @@ This is the description and outcome of the final model--note that the outcome is
 
 modelFULL
 confusionMatrix(fitFULL, df$classe)
+
+```
+
+
+The chart below shows the error rates of the estimation. The black line shows the OOB (out-of-bag) error rate; the other lines show the same statistics for the different classes in the _classe_ variable. They all show that errors have converged much sooner than with the 500 trees used, implying that a lower value for the _mtry_ parameter would have led to unchanged results.
+
+
+```{r chart}
+
+plot(modelFULL)
+
+```
+
+
+Finally, the chart below shows the list of the most important variables according to the mean reduction in accuracy (left-hand-side panel) and in the Gini index (right-hand-side panel). Surprisingly, the most important one is the variable with the date and time. The rest of the important variables provide information about the most important sensors when it comes to measure how correctly are personal activities performed.
+
+
+```{r importance}
+
+varImpPlot(modelFULL)
 
 ```
 
